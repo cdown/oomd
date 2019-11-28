@@ -121,17 +121,20 @@ bool Fs::isDir(const std::string& path) {
 }
 
 std::unordered_set<std::string> Fs::resolveWildcardPath(
-    const std::string& path) {
+    const CgroupPath& cgpath) {
+  std::string path = cgpath.absolutePath();
   std::unordered_set<std::string> ret;
   if (path.empty()) {
     return ret;
   }
 
   auto parts = Util::split(path, '/');
+  auto cgroot_parts = Util::split(cgpath.cgroupFs(), '/');
+  bool is_abs = path[0] == '/';
   std::deque<std::pair<std::string, size_t>> queue;
   // Add initial path piece to begin search on. Start at root
   // if provided path is absolute, else go with relative dir.
-  queue.emplace_back((path[0] == '/' ? "/" : "./"), 0);
+  queue.emplace_back(is_abs ? "/" : "./", 0);
 
   // Perform a DFS on the entire search space. Note that we pattern
   // match at each level of the provided path to eliminate "dead"
@@ -144,6 +147,13 @@ std::unordered_set<std::string> Fs::resolveWildcardPath(
   while (!queue.empty()) {
     const auto front = queue.front(); // copy
     queue.pop_front();
+
+    // Optimisation: readDir and isDir are expensive. Don't issue them if we
+    // are not inside the cgroup root yet.
+    if (is_abs && queue.size() > cgroot_parts.size()) {
+      queue.emplace_front(front.first + cgroot_parts[queue.size()] + "/", queue.size());
+      continue;
+    }
 
     // We can't continue BFS if we've hit a regular file
     if (!isDir(front.first)) {
@@ -197,14 +207,9 @@ std::unordered_set<std::string> Fs::resolveWildcardPath(
 std::unordered_set<CgroupPath> Fs::resolveCgroupWildcardPath(
     const CgroupPath& path) {
   std::unordered_set<CgroupPath> ret;
-  auto resolved_raw_paths = resolveWildcardPath(path.absolutePath());
+  auto resolved_raw_paths = resolveWildcardPath(path);
   for (const auto& raw : resolved_raw_paths) {
-    // The fully resolved path being shorter than the cgroup fs path
-    // should never really happen but we error check anyways
-    if (raw.size() < path.cgroupFs().size()) {
-      continue;
-    }
-
+    OCHECK_EXCEPT(raw.size() >= path.cgroupFs().size(), raw + " is not a child of " + path.cgroupFs());
     ret.emplace(path.cgroupFs(), raw.substr(path.cgroupFs().size()));
   }
 
