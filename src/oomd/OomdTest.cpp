@@ -17,6 +17,7 @@
 
 #include <gtest/gtest.h>
 
+#include <filesystem>
 #include <string>
 #include <unordered_set>
 
@@ -27,7 +28,8 @@
 using namespace Oomd;
 using namespace testing;
 
-constexpr auto kCgroupDataDir = "oomd/fixtures/cgroup";
+const auto kCgroupDataDir =
+    std::filesystem::current_path().u8string() + "/oomd/fixtures/cgroup";
 
 class OomdTest : public ::testing::Test {
  public:

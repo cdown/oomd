@@ -120,18 +120,39 @@ bool Fs::isDir(const std::string& path) {
   return false;
 }
 
+/*
+ * Return if a string might have something special for fnmatch.
+ *
+ * This function is simple and can return false-positives, but not
+ * false-negatives -- that is, true means "maybe", and false means false.
+ * That's ok, since this is only used for optimisations.
+ */
+bool Fs::hasGlob(const std::string& s) {
+  for (const char& c: s) {
+    switch (c) {
+      case '*':
+      case '[':
+      case '?':
+        return true;
+    }
+  }
+  return false;
+}
+
 std::unordered_set<std::string> Fs::resolveWildcardPath(
-    const std::string& path) {
+    const CgroupPath& cgpath) {
+  std::string path = cgpath.absolutePath();
   std::unordered_set<std::string> ret;
   if (path.empty()) {
     return ret;
   }
 
   auto parts = Util::split(path, '/');
+  auto cgroot_parts = Util::split(cgpath.cgroupFs(), '/');
   std::deque<std::pair<std::string, size_t>> queue;
-  // Add initial path piece to begin search on. Start at root
-  // if provided path is absolute, else go with relative dir.
-  queue.emplace_back((path[0] == '/' ? "/" : "./"), 0);
+
+  // Add initial path piece to begin search on. Start at root.
+  queue.emplace_back("/", 0);
 
   // Perform a DFS on the entire search space. Note that we pattern
   // match at each level of the provided path to eliminate "dead"
@@ -145,6 +166,14 @@ std::unordered_set<std::string> Fs::resolveWildcardPath(
     const auto front = queue.front(); // copy
     queue.pop_front();
 
+    // Optimisation: If there's no glob and we're not at the end, it must be
+    // intended to be a single dir. It doesn't matter if it actually *is* in
+    // reality, because if it doesn't exist we'll fail later on.
+    if (front.second < parts.size() - 1 && !Fs::hasGlob(parts[front.second])) {
+      queue.emplace_front(front.first + parts[front.second] + "/", front.second + 1);
+      continue;
+    }
+
     // We can't continue BFS if we've hit a regular file
     if (!isDir(front.first)) {
       continue;
@@ -157,7 +186,7 @@ std::unordered_set<std::string> Fs::resolveWildcardPath(
     for (const auto& entry : de.files) {
       if (::fnmatch(parts[front.second].c_str(), entry.c_str(), 0) == 0) {
         if (front.second == parts.size() - 1) {
-          // We have reached a leaf, add it to the return set
+          // We have reached a leaf, add it to the return set.
           ret.emplace(front.first + entry);
         } else if (front.second < parts.size() - 1) {
           // There are still more parts of the provided path to search.
@@ -172,39 +201,16 @@ std::unordered_set<std::string> Fs::resolveWildcardPath(
     }
   }
 
-  // Clean up paths a little
-  //
-  // Note we can't do an in-place modification b/c std::unordered_set needs
-  // to hash elements and disallows any modifications to while iterating. We
-  // must instead batch deletes and inserts.
-  std::unordered_set<std::string> to_remove;
-  std::unordered_set<std::string> to_add;
-  for (const auto& p : ret) {
-    // Remove leading "./"
-    if (p.size() >= 2 && p.at(0) == '.' && p.at(1) == '/') {
-      to_remove.emplace(p);
-      to_add.emplace(p.substr(2));
-    }
-  }
-  for (const auto& p : to_remove) {
-    ret.erase(p);
-  }
-  ret.insert(to_add.begin(), to_add.end());
-
   return ret;
 }
 
 std::unordered_set<CgroupPath> Fs::resolveCgroupWildcardPath(
     const CgroupPath& path) {
   std::unordered_set<CgroupPath> ret;
-  auto resolved_raw_paths = resolveWildcardPath(path.absolutePath());
+  auto resolved_raw_paths = resolveWildcardPath(path);
   for (const auto& raw : resolved_raw_paths) {
-    // The fully resolved path being shorter than the cgroup fs path
-    // should never really happen but we error check anyways
-    if (raw.size() < path.cgroupFs().size()) {
-      continue;
-    }
-
+    OCHECK_EXCEPT(raw.size() >= path.cgroupFs().size(),
+                  raw + " is not a child of " + path.cgroupFs());
     ret.emplace(path.cgroupFs(), raw.substr(path.cgroupFs().size()));
   }
 

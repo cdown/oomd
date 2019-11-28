@@ -102,34 +102,19 @@ TEST_F(FsTest, FindFiles) {
   EXPECT_THAT(de.files, Not(Contains(std::string("file5"))));
 }
 
-TEST_F(FsTest, ResolveWildcardedPathRelative) {
-  auto dir = fixture_.fsDataDir();
+TEST_F(FsTest, ResolveWildcardedPathAbsolute) {
+  char *real_path = realpath(fixture_.fsDataDir().c_str(), NULL);
+  std::string dir(real_path);
+  free(real_path);
   dir += "/wildcard";
 
-  std::string wildcarded_path_some = "/this/path/is*/going/to/be/long/file";
-  auto resolved = Fs::resolveWildcardPath(dir + wildcarded_path_some);
+  CgroupPath wildcarded_path_some(dir, "/this/path/is*/going/to/be/long/file");
+
+  auto resolved = Fs::resolveWildcardPath(wildcarded_path_some);
   ASSERT_EQ(resolved.size(), 2);
   EXPECT_THAT(resolved, Contains(dir + "/this/path/is/going/to/be/long/file"));
   EXPECT_THAT(
       resolved, Contains(dir + "/this/path/isNOT/going/to/be/long/file"));
-
-  std::string wildcarded_path_all = "/this/path/*/going/to/be/long/file";
-  resolved = Fs::resolveWildcardPath(dir + wildcarded_path_all);
-  ASSERT_EQ(resolved.size(), 3);
-  EXPECT_THAT(resolved, Contains(dir + "/this/path/is/going/to/be/long/file"));
-  EXPECT_THAT(
-      resolved, Contains(dir + "/this/path/isNOT/going/to/be/long/file"));
-  EXPECT_THAT(resolved, Contains(dir + "/this/path/WAH/going/to/be/long/file"));
-
-  resolved = Fs::resolveWildcardPath(dir + "/not/a/valid/dir");
-  ASSERT_EQ(resolved.size(), 0);
-}
-
-TEST_F(FsTest, ResolveWildcardedPathAbsolute) {
-  auto resolved = Fs::resolveWildcardPath("/proc/vm*");
-  ASSERT_EQ(resolved.size(), 2);
-  EXPECT_THAT(resolved, Contains("/proc/vmstat"));
-  EXPECT_THAT(resolved, Contains("/proc/vmallocinfo"));
 }
 
 TEST_F(FsTest, ResolveCgroupWildcardPath) {

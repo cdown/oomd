@@ -85,7 +85,7 @@ class Fs {
    * resolved fully qualified paths.
    */
   static std::unordered_set<std::string> resolveWildcardPath(
-      const std::string& path);
+      const CgroupPath& path);
   static std::unordered_set<CgroupPath> resolveCgroupWildcardPath(
       const CgroupPath& path);
 
@@ -164,6 +164,8 @@ class Fs {
   static DeviceType getDeviceType(
       const std::string& dev_id,
       const std::string& path = "/sys/dev/block");
+
+  static bool hasGlob(const std::string& s);
 };
 
 } // namespace Oomd
